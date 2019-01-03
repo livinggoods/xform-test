@@ -1,92 +1,150 @@
-/*
- * Copyright (C) 2009 University of Washington
- *
- * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
- * in compliance with the License. You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software distributed under the License
- * is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
- * or implied. See the License for the specific language governing permissions and limitations under
- * the License.
- */
-
 package org.pma2020.xform_test;
 
-import java.io.File;
-import java.io.IOException;
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
-import javax.xml.parsers.ParserConfigurationException;
-import javax.xml.transform.Transformer;
-import javax.xml.transform.TransformerException;
-import javax.xml.transform.TransformerFactory;
-import javax.xml.transform.dom.DOMSource;
-import javax.xml.transform.stream.StreamResult;
-import org.w3c.dom.Document;
-import org.w3c.dom.NamedNodeMap;
-import org.w3c.dom.Node;
-import org.w3c.dom.NodeList;
-import org.xml.sax.SAXException;
+import java.io.*;
+import java.util.ArrayList;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /* Taken from: https://www.mkyong.com/java/how-to-modify-xml-file-in-java-dom-parser/ */
 class XmlModifier {
     private String newFilePath;
-    private Document xmlDom;
+//    private Document xmlDom;
+    private String xmlString;
 
-    XmlModifier(String filePath) {
+    XmlModifier(String filePath) throws IOException {
         newFilePath = filePath.substring(0, filePath.length() -4) + "-modified" + ".xml";
-        xmlDom = createXmlDom(filePath);
+//        xmlDom = createXmlDom(filePath);
+        xmlString = createXmlString(filePath);
     }
 
-    private Document createXmlDom(String filePath) {
-        DocumentBuilderFactory docFactory = DocumentBuilderFactory.newInstance();
-        Document doc = null;
-        try {
-            DocumentBuilder docBuilder = docFactory.newDocumentBuilder();
-            doc = docBuilder.parse(filePath);
-        } catch (ParserConfigurationException | IOException | SAXException exc) {
-            exc.printStackTrace();
+    private String createXmlString(String filePath) throws IOException {
+        try (BufferedReader br = new BufferedReader(new FileReader(filePath))) {
+            StringBuilder sb = new StringBuilder();
+            String line = br.readLine();
+
+            while (line != null) {
+                sb.append(line);
+                sb.append("\n");
+                line = br.readLine();
+            }
+            return sb.toString();
         }
-        return doc;
     }
 
-    void writeToFile() {
-        try {
-            TransformerFactory transformerFactory = TransformerFactory.newInstance();
-            Transformer transformer = transformerFactory.newTransformer();
-            DOMSource source = new DOMSource(xmlDom);
-            StreamResult result = new StreamResult(new File(newFilePath));
-            transformer.transform(source, result);
-        } catch (TransformerException exc) {
-            exc.printStackTrace();
+    void writeToFile() throws IOException {
+        FileWriter file = new FileWriter(newFilePath);
+        file.write(xmlString);
+        file.flush();
+        file.close();
+    }
+
+    /** Extracts function name from a given string.
+     *
+     * @param str The string containing function name; usually programming logic, containing func call.
+     *
+     * @return function name if present, else empty string */
+    private String extractFunctionName(String str) {
+        ArrayList<String> funcNameMatches = new ArrayList<>();
+
+        Matcher funcNameMatcher = Pattern.compile("^[a-z]*\\(").matcher(str);
+        while(funcNameMatcher.find())
+            funcNameMatches.add(funcNameMatcher.group());
+
+        if (funcNameMatches.size() < 1)
+            return "";
+        else {
+            String match = funcNameMatches.get(0);
+            return match.substring(0, match.length() - 1);
         }
+    }
+
+    private String handleFunctionPatterns(String broadMatch) {
+        String funcName = extractFunctionName(broadMatch);
+
+        if (funcName.equals(""))
+            return broadMatch;
+        else {
+            StringBuilder match = new StringBuilder();
+            String funcNamePlusParens = funcName + "(";
+            match.append(funcNamePlusParens);
+            int totOpenParens = 1;
+            int totCloseParens = 0;
+
+            for (int i = funcNamePlusParens.length(); i < broadMatch.length(); i++){
+                char c = broadMatch.charAt(i);
+                match.append(c);
+
+                if (c == '(')
+                    totOpenParens++;
+                else if (c == ')')
+                    totCloseParens++;
+                if (totOpenParens == totCloseParens)
+                    break;
+            }
+
+            return match.toString();
+        }
+    }
+
+    boolean findReplace(String find, String replace) {
+        // temp: https://www.regextester.com/97778
+        // Matcher matcher = Pattern.compile("pulldata\\(.*\\)").matcher(xmlString);  // testing
+        Matcher matcher = Pattern.compile(find, Pattern.DOTALL).matcher(xmlString);
+        ArrayList<String> matches = new ArrayList<>();
+        ArrayList<String> broadMatches = new ArrayList<>();
+
+        while(matcher.find())
+            broadMatches.add(matcher.group());
+
+        // corrections - properly match single function
+        for (String broadMatch : broadMatches) {
+            String match = handleFunctionPatterns(broadMatch);
+            matches.add(match);
+        }
+
+        // TODO - swap these? does it even matter?
+//        ArrayList<String> matchesToRecurse = new ArrayList<>(matches);
+        ArrayList<String> matchesToRecurse = matches;
+
+        // replacements
+//        for (String match : matches) {
+        for (int i = 0; i < matches.size(); i++) {
+            String match = matches.get(i);
+            if (replace.equals("*")) {  // implementation of xform-test glob syntax for replace
+                String funcWrapperToRemove = find.replace(".*", "")
+                        .replace("\\", "")
+                        .replace(")", "");
+                String contentsToKeep = match.substring(0, match.length() - 1)
+                        .replace(funcWrapperToRemove, "");
+                xmlString = xmlString.replace(match, contentsToKeep);
+
+            } else {
+                // check if it is a calculation override, e.g. of the form 'pulldata(): VALUE'
+                String calculateAssertionSuffix = "()";
+                String funcName = extractFunctionName(match);
+                boolean isCalculateAssertion = match.equals(funcName + calculateAssertionSuffix);
+                if (isCalculateAssertion)
+                    //noinspection SuspiciousListRemoveInLoop
+                    matchesToRecurse.remove(i);
+                else {
+                    if (replace.equals("'" + find + "'")) {
+                        xmlString = xmlString.replace(match, "'" + match + "'");  // encapsulate in string
+                        //noinspection SuspiciousListRemoveInLoop
+                        matchesToRecurse.remove(i);
+                    }
+                    xmlString = xmlString.replace(match, replace);  // literal find replace
+                }
+            }
+            if (matchesToRecurse.size() > 0)
+                findReplace(find, replace);
+        }
+
+        //noinspection UnnecessaryLocalVariable
+        boolean modificationsMade = broadMatches.size() > 0;
+        return modificationsMade;
     }
 
     String getnewFilePath() {
-      return newFilePath;
-    }
-
-    /** Originally, I wanted a separate methods to get a list of nodes and then manipulate nodes. This would also allow
-    * me to optionally print warnings outside of this method. To save time, this has not yet been implemented. -jef,
-    * 2018/08/14 */
-    boolean modifyNodeAttributesByFindReplace(String attributeName, String find, String replace) {
-        boolean modificationMade = false;
-        NodeList bindElements = xmlDom.getElementsByTagName("bind");
-
-        for (int i = 0; i < bindElements.getLength(); i++) {
-            Node childNode = bindElements.item(i);
-            NamedNodeMap attributes = childNode.getAttributes();
-            Node calculateAttr = attributes.getNamedItem(attributeName);
-            if (calculateAttr != null) {
-                if (calculateAttr.getNodeValue().contains(find)) {
-                    calculateAttr.setNodeValue(replace);
-                    modificationMade = true;
-                }
-            }
-        }
-
-        return modificationMade;
+        return newFilePath;
     }
 }

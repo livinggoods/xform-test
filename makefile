@@ -3,7 +3,8 @@ build-docs-no-open build-docs docs-push-production docs-push-staging \
 docs-push create-docs docs-create docs-build docs test-unit-tests \
 test-files-to-static-doc-files push-docs push-docs-staging docs-open \
 push-docs-production get-latest-jar build jar limited-test limited-test-only \
-test prep-release install release test-crvs crvs-test crvs
+test prep-release install release test-crvs crvs-test crvs crvs-validate \
+validate-crvs crvs-validate-only
 
 # TODO: Should be able to pass arguments.
 # Test
@@ -27,7 +28,16 @@ crvs-test:
 	@echo Currently need to have QTools2 installed globally for this test to work.
 	python2 -m qtools2.convert -r test/static/CRVS/input/src/ET*.xlsx
 	mv test/static/CRVS/input/src/*.xml test/static/CRVS/input
+crvs-validate-only:
+	java -jar /Library/Java/Executables/ODK-Validate-v1.10.3.jar \
+	test/static/CRVS/input/ET-CRVS-KAP-Questionnaire-v11.1-jef.xml
+	java -jar /Library/Java/Executables/ODK-Validate-v1.10.3.jar \
+	test/static/CRVS/input/ET-CRVS-BERFS-Questionnaire-v6.1-jef.xml
+crvs-validate:
+	make crvs-test
+#	validate test/static/CRVS/input/*.xml
 test-crvs: crvs-test
+validate-crvs: crvs-validate
 crvs: crvs-test
 
 # Install
